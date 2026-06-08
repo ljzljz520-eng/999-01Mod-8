@@ -1,4 +1,7 @@
 <?php
+error_reporting(0);
+ini_set('display_errors', 0);
+
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -13,6 +16,9 @@ require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/auth.php';
 
 try {
+    $auth = new Auth();
+    $user = $auth->requireLogin();
+
     $facode = isset($_GET['facode']) ? $_GET['facode'] : (isset($_POST['facode']) ? $_POST['facode'] : null);
 
     if (!$facode) {
@@ -21,22 +27,6 @@ try {
 
     $db = new Database();
     $pdo = $db->connect();
-    $auth = new Auth();
-
-    $user = $auth->getCurrentUser();
-
-    if (!$user) {
-        $stmt = $pdo->prepare("SELECT facode, sn FROM facode2sn WHERE facode = :facode");
-        $stmt->execute(['facode' => $facode]);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        echo json_encode([
-            'success' => true,
-            'data' => $result ?: null,
-            'mode' => 'legacy'
-        ]);
-        exit;
-    }
 
     $auth->logAudit($user, 'QUERY_ATTEMPT', $facode);
 
