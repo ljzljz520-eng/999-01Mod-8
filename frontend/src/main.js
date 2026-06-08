@@ -1,17 +1,167 @@
 
-// ==================== UI 管理器 (模态框系统) ====================
+// ==================== 认证管理器 ====================
+class AuthManager {
+    constructor() {
+        this.tokenKey = 'fa_auth_token';
+        this.userKey = 'fa_auth_user';
+        this.apiBase = 'http://localhost:8080/api';
+        this.currentUser = null;
+        this.init();
+    }
+
+    init() {
+        const token = localStorage.getItem(this.tokenKey);
+        const user = localStorage.getItem(this.userKey);
+        if (token && user) {
+            this.currentUser = JSON.parse(user);
+            this.showMainInterface();
+            this.checkAuth();
+        } else {
+            this.showLogin();
+        }
+
+        document.getElementById('logoutBtn')?.addEventListener('click', () => this.logout());
+    }
+
+    async login() {
+        const username = document.getElementById('loginUsername').value.trim();
+        const password = document.getElementById('loginPassword').value.trim();
+
+        if (!username || !password) {
+            uiManager.alert('请输入用户名和密码', '登录失败');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${this.apiBase}/login.php`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (data.success && data.data) {
+                this.currentUser = data.data.user;
+                localStorage.setItem(this.tokenKey, data.data.token);
+                localStorage.setItem(this.userKey, JSON.stringify(data.data.user));
+                this.showMainInterface();
+                queryManager.loadList();
+                uiManager.alert(`欢迎回来，${data.data.user.real_name}！`, '登录成功');
+            } else {
+                uiManager.alert(data.error || '登录失败', '错误');
+            }
+        } catch (e) {
+            uiManager.alert('无法连接到服务器，请检查网络', '连接错误');
+        }
+    }
+
+    async logout() {
+        const token = localStorage.getItem(this.tokenKey);
+        try {
+            await fetch(`${this.apiBase}/logout.php`, {
+                method: 'POST',
+                headers: this.getAuthHeaders()
+            });
+        } catch (e) { }
+
+        localStorage.removeItem(this.tokenKey);
+        localStorage.removeItem(this.userKey);
+        this.currentUser = null;
+        this.showLogin();
+    }
+
+    async checkAuth() {
+        try {
+            const response = await fetch(`${this.apiBase}/me.php`, {
+                headers: this.getAuthHeaders()
+            });
+
+            const data = await response.json();
+            if (data.success && data.data) {
+                this.currentUser = data.data;
+                localStorage.setItem(this.userKey, JSON.stringify(data.data));
+                this.updateUserUI();
+            } else {
+                this.logout();
+            }
+        } catch (e) {
+            this.logout();
+        }
+    }
+
+    showLogin() {
+        document.getElementById('loginOverlay').classList.remove('hidden');
+        document.getElementById('userInfo').classList.add('hidden');
+        document.getElementById('userInfo').classList.remove('flex');
+    }
+
+    showMainInterface() {
+        document.getElementById('loginOverlay').classList.add('hidden');
+        document.getElementById('userInfo').classList.remove('hidden');
+        document.getElementById('userInfo').classList.add('flex');
+        this.updateUserUI();
+    }
+
+    updateUserUI() {
+        if (!this.currentUser) return;
+
+        const roleMap = {
+            'admin': '资产管理员',
+            'employee': '普通员工',
+            'vendor': '外包维修人员'
+        };
+
+        document.getElementById('userRealName').textContent = this.currentUser.real_name;
+        document.getElementById('userRole').textContent = roleMap[this.currentUser.role] || this.currentUser.role;
+        document.getElementById('userAvatar').textContent = this.currentUser.real_name.charAt(0);
+
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) {
+            if (this.currentUser.can_export || this.currentUser.role === 'admin') {
+                exportBtn.classList.remove('hidden');
+                exportBtn.classList.add('flex');
+            } else {
+                exportBtn.classList.add('hidden');
+                exportBtn.classList.remove('flex');
+            }
+        }
+
+        const generateLinkBtn = document.getElementById('generateLinkBtn');
+        if (generateLinkBtn) {
+            if (this.currentUser.can_generate_link || this.currentUser.role === 'admin') {
+                generateLinkBtn.classList.remove('hidden');
+            } else {
+                generateLinkBtn.classList.add('hidden');
+            }
+        }
+    }
+
+    getAuthHeaders() {
+        const headers = connectionManager?.getHeaders() || {};
+        const token = localStorage.getItem(this.tokenKey);
+        if (token) {
+            headers['X-AUTH-TOKEN'] = token;
+        }
+        return headers;
+    }
+
+    getToken() {
+        return localStorage.getItem(this.tokenKey);
+    }
+}
+
+// ==================== UI 管理器 ====================
 class UIManager {
     constructor() {
         this.overlay = document.getElementById('globalOverlay');
 
-        // Confirm Modal Elements
         this.confirmModal = document.getElementById('confirmModal');
         this.confirmTitle = document.getElementById('confirmTitle');
         this.confirmMessage = document.getElementById('confirmMessage');
         this.confirmOkBtn = document.getElementById('confirmOkBtn');
         this.confirmCancelBtn = document.getElementById('confirmCancelBtn');
 
-        // Alert Modal Elements
         this.alertModal = document.getElementById('alertModal');
         this.alertMessage = document.getElementById('alertMessage');
         this.alertOkBtn = document.getElementById('alertOkBtn');
@@ -20,7 +170,6 @@ class UIManager {
     }
 
     init() {
-        // Bind generic close events
         if (this.confirmCancelBtn) {
             this.confirmCancelBtn.addEventListener('click', () => this.hideConfirm());
         }
@@ -34,9 +183,6 @@ class UIManager {
     }
 
     hideOverlay() {
-        // Only hide if no other modals are open (checked via class logic or simple counter)
-        // For simplicity, we manage overlay visibility per modal type in their show/hide methods
-        // But to prevent conflicts, we'll force show/hide based on active modals
         if (this.confirmModal.classList.contains('hidden') &&
             this.alertModal.classList.contains('hidden') &&
             document.getElementById('settingsModal').classList.contains('hidden')) {
@@ -44,14 +190,12 @@ class UIManager {
         }
     }
 
-    // Custom Confirm Dialog
     confirm(message, onConfirm, title = '确认操作') {
         if (!this.confirmModal) return;
 
         this.confirmTitle.textContent = title;
         this.confirmMessage.textContent = message;
 
-        // Clean up old listeners
         const newOkBtn = this.confirmOkBtn.cloneNode(true);
         this.confirmOkBtn.parentNode.replaceChild(newOkBtn, this.confirmOkBtn);
         this.confirmOkBtn = newOkBtn;
@@ -70,7 +214,6 @@ class UIManager {
         this.hideOverlay();
     }
 
-    // Custom Alert Dialog
     alert(message, title = '提示') {
         if (!this.alertModal) return;
 
@@ -90,7 +233,7 @@ class UIManager {
 // ==================== 数据库连接管理器 ====================
 class ConnectionManager {
     constructor() {
-        this.connectionsKey = 'fa_query_connections_v5'; // Key upgrade
+        this.connectionsKey = 'fa_query_connections_v5';
         this.activeIdKey = 'fa_query_active_connection_id_v5';
 
         this.modal = document.getElementById('settingsModal');
@@ -109,22 +252,19 @@ class ConnectionManager {
 
     ensureDefaultConnection() {
         const connections = this.getConnections();
-        // Check if default MySQL connection exists
         if (!connections.find(c => c.id === 'default-mysql')) {
             const defaultConn = {
                 id: 'default-mysql',
                 name: '系统默认数据库 (MySQL)',
-                type: 'default', // Special type for internal docker default
+                type: 'default',
                 isDefault: true,
                 canDelete: false,
                 createdAt: new Date().toISOString()
             };
-            // Add to start
             connections.unshift(defaultConn);
             this.saveConnections(connections);
         }
 
-        // Ensure an active connection is set
         if (!this.getActiveConnectionId()) {
             this.setActiveConnection('default-mysql');
         }
@@ -158,7 +298,7 @@ class ConnectionManager {
         const newConn = {
             id: 'conn-' + Date.now(),
             name: config.name || '新连接',
-            type: 'mysql', // Only MySQL supported now
+            type: 'mysql',
             isDefault: false,
             canDelete: true,
             createdAt: new Date().toISOString(),
@@ -212,7 +352,7 @@ class ConnectionManager {
                     dbname: mysqlMatch[5]
                 };
             }
-            throw new Error('仅支持 MySQL 连接字符串 (mysql://user:pass@host:port/dbname)');
+            throw new Error('仅支持 MySQL 连接字符串');
         } catch (e) {
             throw new Error('连接字符串解析失败：' + e.message);
         }
@@ -220,12 +360,10 @@ class ConnectionManager {
 
     getHeaders() {
         const conn = this.getActiveConnection();
-        // Default (Internal Docker MySQL) -> No Headers (Backend uses Env)
         if (!conn || conn.type === 'default') {
             return {};
         }
 
-        // Custom External MySQL
         if (conn.type === 'mysql') {
             return {
                 'X-DB-CONNECTION': 'mysql',
@@ -326,8 +464,6 @@ class ConnectionManager {
         const conn = editId ? connections.find(c => c.id === editId) : null;
         const isEdit = !!conn;
 
-        // Default connection cannot be edited, but logic prevents regular users from reaching here via UI for default conn
-
         const html = `
             <form id="connectionForm" class="space-y-5" novalidate>
                 <div class="flex items-center gap-2 text-gray-500 mb-2 cursor-pointer hover:text-gray-800 transition-colors w-max" onclick="window.connectionManager.renderConnectionsList()">
@@ -335,7 +471,6 @@ class ConnectionManager {
                     <span class="text-sm font-medium">返回连接列表</span>
                 </div>
 
-                <!-- 生产环境警告 -->
                 <div class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-md">
                     <div class="flex">
                         <div class="flex-shrink-0">
@@ -421,8 +556,6 @@ class ConnectionManager {
 
         try {
             const parsed = this.parseConnectionString(connString);
-
-            // Auto fill
             if (parsed.type === 'mysql') {
                 document.getElementById('connHost').value = parsed.host || '';
                 document.getElementById('connPort').value = parsed.port || '3306';
@@ -436,7 +569,6 @@ class ConnectionManager {
         }
     }
 
-    // 辅助：翻译常见数据库错误
     translateError(errorMsg) {
         if (!errorMsg) return '未知错误';
         if (errorMsg.includes('Access denied')) return '数据库访问被拒绝：用户名或密码错误';
@@ -449,48 +581,35 @@ class ConnectionManager {
 
     saveConnectionFromForm(editId) {
         const name = document.getElementById('connName').value.trim();
-        const type = 'mysql';
 
-        // 1. 基础校验
         if (!name) {
             uiManager.alert('请输入连接名称', '校验失败');
             return;
         }
 
-        const config = { name, type };
+        const config = { name, type: 'mysql' };
         config.host = document.getElementById('connHost').value.trim();
         config.port = document.getElementById('connPort').value.trim();
         config.dbname = document.getElementById('connDbname').value.trim();
         config.user = document.getElementById('connUser').value.trim();
         config.pass = document.getElementById('connPass').value.trim();
 
-        // 2. 详细字段校验
         if (!config.host) {
-            uiManager.alert('请输入主机地址 (IP 或域名)', '校验失败');
+            uiManager.alert('请输入主机地址', '校验失败');
             return;
         }
-
         if (!config.port) {
             uiManager.alert('请输入端口号', '校验失败');
             return;
         }
-        const portNum = parseInt(config.port, 10);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-            uiManager.alert('端口号必须是 1 到 65535 之间的数字', '校验失败');
-            return;
-        }
-
         if (!config.user) {
             uiManager.alert('请输入数据库用户名', '校验失败');
             return;
         }
-
         if (!config.dbname) {
             uiManager.alert('请输入数据库名称', '校验失败');
             return;
         }
-
-        // 密码允许为空，但通常给个提醒? 不，视具体情况，这里不做强制。
 
         if (editId) {
             this.updateConnection(editId, config);
@@ -504,10 +623,453 @@ class ConnectionManager {
     }
 }
 
+// ==================== 查询管理器 ====================
+class QueryManager {
+    constructor() {
+        this.form = document.getElementById('queryForm');
+        this.resultBox = document.getElementById('resultBox');
+        this.errorBox = document.getElementById('errorBox');
+        this.loadingEl = document.getElementById('loading');
+        this.curlCommand = document.getElementById('curlCommand');
+        this.apiBase = 'http://localhost:8080/api';
+
+        this.currentTab = 'query';
+        this.currentPage = 1;
+        this.pageSize = 10;
+        this.totalPages = 0;
+        this.total = 0;
+        this.canExport = false;
+
+        this.init();
+    }
+
+    init() {
+        if (this.form) {
+            this.form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.performQuery();
+            });
+
+            const facodeInput = document.getElementById('facodeInput');
+            const ipInput = document.getElementById('ipInput');
+            if (facodeInput) facodeInput.addEventListener('input', () => this.updateCurlCommand());
+            if (ipInput) ipInput.addEventListener('input', () => this.updateCurlCommand());
+        }
+
+        document.getElementById('loginPassword')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') authManager.login();
+        });
+        document.getElementById('loginUsername')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') authManager.login();
+        });
+
+        this.updateCurlCommand();
+    }
+
+    switchTab(tab) {
+        this.currentTab = tab;
+        const tabQuery = document.getElementById('tabQuery');
+        const tabList = document.getElementById('tabList');
+        const queryForm = document.getElementById('queryForm');
+        const listView = document.getElementById('listView');
+
+        if (tab === 'query') {
+            tabQuery.className = 'px-6 py-3 text-sm font-bold border-b-2 border-indigo-500 text-indigo-600 transition-colors';
+            tabList.className = 'px-6 py-3 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors';
+            queryForm.classList.remove('hidden');
+            listView.classList.add('hidden');
+            this.resultBox?.classList.remove('hidden');
+        } else {
+            tabQuery.className = 'px-6 py-3 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-gray-700 transition-colors';
+            tabList.className = 'px-6 py-3 text-sm font-bold border-b-2 border-indigo-500 text-indigo-600 transition-colors';
+            queryForm.classList.add('hidden');
+            listView.classList.remove('hidden');
+            this.resultBox?.classList.add('hidden');
+            this.loadList();
+        }
+    }
+
+    async loadList() {
+        if (!authManager.currentUser) return;
+
+        const keyword = document.getElementById('listKeyword')?.value.trim() || '';
+        const loading = document.getElementById('listLoading');
+        const tableBody = document.getElementById('listTableBody');
+
+        loading.classList.remove('hidden');
+        tableBody.innerHTML = '';
+
+        try {
+            const url = `${this.apiBase}/list.php?page=${this.currentPage}&pageSize=${this.pageSize}&keyword=${encodeURIComponent(keyword)}`;
+            const response = await fetch(url, { headers: authManager.getAuthHeaders() });
+            const data = await response.json();
+
+            if (data.success && data.data) {
+                this.total = data.data.total;
+                this.totalPages = Math.ceil(this.total / this.pageSize);
+                this.canExport = data.data.can_export;
+
+                this.renderTable(data.data.list);
+                this.renderPagination();
+            } else {
+                uiManager.alert(data.error || '加载失败', '错误');
+            }
+        } catch (e) {
+            uiManager.alert('无法连接到服务器', '连接错误');
+        } finally {
+            loading.classList.add('hidden');
+        }
+    }
+
+    renderTable(list) {
+        const tableBody = document.getElementById('listTableBody');
+        const statusMap = {
+            'in_use': { text: '使用中', class: 'bg-green-100 text-green-800' },
+            'in_repair': { text: '维修中', class: 'bg-yellow-100 text-yellow-800' },
+            'idle': { text: '闲置', class: 'bg-gray-100 text-gray-800' },
+            'scrapped': { text: '已报废', class: 'bg-red-100 text-red-800' }
+        };
+
+        if (list.length === 0) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="px-4 py-12 text-center text-gray-500">
+                        暂无数据
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tableBody.innerHTML = list.map(item => {
+            const status = statusMap[item.status] || { text: item.status, class: 'bg-gray-100 text-gray-800' };
+            return `
+                <tr class="hover:bg-gray-50 transition-colors cursor-pointer" onclick="window.queryManager.viewDetail('${item.facode}')">
+                    <td class="px-4 py-3 text-sm font-mono font-semibold text-indigo-600">${item.facode}</td>
+                    <td class="px-4 py-3 text-sm font-mono text-gray-900">${item.sn}</td>
+                    <td class="px-4 py-3 text-sm text-gray-900">${item.asset_name}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${item.dept_name || '-'}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${item.user_name || '-'}</td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${status.class}">${status.text}</span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${item.location || '-'}</td>
+                    <td class="px-4 py-3">
+                        ${(authManager.currentUser?.role === 'admin') ? `
+                        <button onclick="event.stopPropagation();window.queryManager.generateLink('${item.facode}')" 
+                            class="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition">
+                            生成维修链接
+                        </button>
+                        ` : ''}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    renderPagination() {
+        document.getElementById('listTotal').textContent = `共 ${this.total} 条记录`;
+        document.getElementById('pageInfo').textContent = `第 ${this.currentPage} / ${this.totalPages || 1} 页`;
+        document.getElementById('prevPageBtn').disabled = this.currentPage <= 1;
+        document.getElementById('nextPageBtn').disabled = this.currentPage >= this.totalPages;
+    }
+
+    prevPage() {
+        if (this.currentPage > 1) {
+            this.currentPage--;
+            this.loadList();
+        }
+    }
+
+    nextPage() {
+        if (this.currentPage < this.totalPages) {
+            this.currentPage++;
+            this.loadList();
+        }
+    }
+
+    async viewDetail(facode) {
+        document.getElementById('facodeInput').value = facode;
+        this.switchTab('query');
+        await this.performQuery();
+    }
+
+    updateCurlCommand() {
+        const facode = document.getElementById('facodeInput')?.value || 'FA001';
+        const ip = document.getElementById('ipInput')?.value || 'localhost';
+        const headers = connectionManager?.getHeaders() || {};
+
+        let curlCmd = `curl "http://${ip}:8080/api/query.php?facode=${facode}"`;
+        Object.entries(headers).forEach(([key, value]) => {
+            if (value) curlCmd += ` \\\n  -H "${key}: ${value}"`;
+        });
+        if (authManager?.getToken()) {
+            curlCmd += ` \\\n  -H "X-AUTH-TOKEN: ${authManager.getToken()}"`;
+        }
+
+        if (this.curlCommand) this.curlCommand.textContent = curlCmd;
+    }
+
+    async performQuery() {
+        const facode = document.getElementById('facodeInput')?.value.trim();
+        const ip = document.getElementById('ipInput')?.value.trim() || 'localhost';
+
+        if (!ip) {
+            uiManager.alert('请输入服务器 IP 地址或域名', '缺少参数');
+            return;
+        }
+
+        if (!facode) {
+            uiManager.alert('请输入固定资产编码', '参数错误');
+            return;
+        }
+
+        this.showLoading();
+        this.hideError();
+        this.hideResult();
+
+        try {
+            const headers = authManager?.getAuthHeaders() || connectionManager?.getHeaders() || {};
+            const url = `http://${ip}:8080/api/query.php?facode=${encodeURIComponent(facode)}`;
+
+            const response = await fetch(url, { method: 'GET', headers: headers });
+
+            if (response.status === 401) {
+                authManager?.logout();
+                return;
+            }
+
+            if (response.status === 403) {
+                const errorData = await response.json().catch(() => ({}));
+                uiManager.alert(errorData.error || '权限不足，无法访问该资产', '访问被拒绝');
+                this.hideLoading();
+                return;
+            }
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const rawError = errorData.error || `HTTP 错误！状态码: ${response.status}`;
+                const translatedError = connectionManager?.translateError ? connectionManager.translateError(rawError) : rawError;
+                throw new Error(translatedError);
+            }
+
+            const data = await response.json();
+
+            if (data.success && data.data) {
+                this.showResult(data.data, data.user_role);
+                historyManager?.add({ facode, ip, sn: data.data.sn });
+            } else if (data.success && !data.data) {
+                this.showError('未找到该固定资产编码对应的序列号');
+                historyManager?.add({ facode, ip, sn: null });
+            } else {
+                const rawError = data.error || '查询失败';
+                const translatedError = connectionManager?.translateError ? connectionManager.translateError(rawError) : rawError;
+                throw new Error(translatedError);
+            }
+        } catch (error) {
+            let errorMsg = '查询出错：';
+            if (error.message.includes('Failed to fetch')) {
+                errorMsg += '无法连接到服务器，请检查 IP 和后端状态';
+            } else {
+                errorMsg += error.message;
+            }
+            this.showError(errorMsg);
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async exportData() {
+        if (!authManager?.currentUser) {
+            uiManager.alert('请先登录', '未登录');
+            return;
+        }
+
+        if (!this.canExport && authManager.currentUser.role !== 'admin') {
+            uiManager.alert('您没有导出权限', '权限不足');
+            return;
+        }
+
+        try {
+            const ip = document.getElementById('ipInput')?.value.trim() || 'localhost';
+            const url = `http://${ip}:8080/api/export.php`;
+
+            const headers = authManager.getAuthHeaders();
+            headers['Content-Type'] = 'application/json';
+
+            const response = await fetch(url, { headers: headers });
+
+            if (response.status === 401) {
+                authManager.logout();
+                return;
+            }
+
+            if (response.status === 403) {
+                const errorData = await response.json().catch(() => ({}));
+                uiManager.alert(errorData.error || '您没有导出权限', '权限不足');
+                return;
+            }
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || '导出失败');
+            }
+
+            const blob = await response.blob();
+            const downloadUrl = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            const filename = `固定资产清单_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(downloadUrl);
+
+            uiManager.alert('导出成功', '操作成功');
+        } catch (e) {
+            uiManager.alert(e.message || '导出失败', '错误');
+        }
+    }
+
+    async generateLink(facode) {
+        if (authManager.currentUser?.role !== 'admin') {
+            uiManager.alert('仅管理员可生成维修链接', '权限不足');
+            return;
+        }
+
+        try {
+            const ip = document.getElementById('ipInput')?.value.trim() || 'localhost';
+            const response = await fetch(`http://${ip}:8080/api/generate_link.php`, {
+                method: 'POST',
+                headers: {
+                    ...authManager.getAuthHeaders(),
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ facode })
+            });
+
+            const data = await response.json();
+            if (data.success && data.data) {
+                uiManager.confirm(`已生成一次性维修链接（24小时有效）：\n\n${data.data.link}\n\n是否复制链接？`, () => {
+                    navigator.clipboard.writeText(data.data.link);
+                    uiManager.alert('链接已复制到剪贴板', '操作成功');
+                }, '生成成功');
+            } else {
+                uiManager.alert(data.error || '生成失败', '错误');
+            }
+        } catch (e) {
+            uiManager.alert('生成失败，请稍后重试', '错误');
+        }
+    }
+
+    showGenerateLinkModal() {
+        const facode = prompt('请输入要生成维修链接的资产编码（FACode）：');
+        if (facode?.trim()) {
+            this.generateLink(facode.trim());
+        }
+    }
+
+    showLoading() {
+        if (this.loadingEl) this.loadingEl.classList.remove('hidden');
+    }
+
+    hideLoading() {
+        if (this.loadingEl) this.loadingEl.classList.add('hidden');
+    }
+
+    showResult(data, userRole) {
+        if (!this.resultBox) return;
+
+        const resultContent = document.getElementById('resultContent');
+        if (resultContent) {
+            const isAdmin = userRole === 'admin';
+            const priceHtml = data.purchase_price ? `
+                <div class="h-px bg-emerald-200"></div>
+                <div>
+                    <div class="text-xs text-gray-500 uppercase font-semibold mb-1">采购价格</div>
+                    <div class="text-xl font-bold text-gray-800 font-mono">¥${Number(data.purchase_price).toLocaleString()}</div>
+                </div>
+            ` : '';
+
+            const extraHtml = `
+                <div class="h-px bg-emerald-200"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">资产名称</div>
+                        <div class="text-sm font-medium text-gray-800">${data.asset_name || '-'}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">规格型号</div>
+                        <div class="text-sm font-medium text-gray-800">${data.specification || '-'}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">所属部门</div>
+                        <div class="text-sm font-medium text-gray-800">${data.dept_name || '-'}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-gray-500 uppercase font-semibold mb-1">领用人</div>
+                        <div class="text-sm font-medium text-gray-800">${data.user_name || '-'}</div>
+                    </div>
+                </div>
+            `;
+
+            resultContent.innerHTML = `
+                <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6 border border-emerald-100 shadow-sm animate-fade-in">
+                    <div class="flex items-center justify-between mb-4">
+                        <span class="text-sm font-bold text-emerald-600 uppercase tracking-widest">查询结果</span>
+                        <span class="bg-emerald-200 text-emerald-800 text-xs px-2 py-1 rounded-full font-bold">成功</span>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <div class="text-xs text-gray-500 uppercase font-semibold mb-1">固定资产编码</div>
+                            <div class="text-2xl font-bold text-gray-800 font-mono">${data.facode}</div>
+                        </div>
+                        <div class="h-px bg-emerald-200"></div>
+                        <div>
+                            <div class="text-xs text-gray-500 uppercase font-semibold mb-1">序列号 (SN)</div>
+                            <div class="text-3xl font-extrabold text-emerald-600 font-mono tracking-wide selection:bg-emerald-200">${data.sn}</div>
+                        </div>
+                        ${extraHtml}
+                        ${priceHtml}
+                    </div>
+                    ${isAdmin ? `
+                    <div class="mt-4 pt-4 border-t border-emerald-200">
+                        <button onclick="window.queryManager.generateLink('${data.facode}')" 
+                            class="w-full py-2 px-4 bg-purple-600 text-white text-sm font-bold rounded-lg hover:bg-purple-700 transition flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                            </svg>
+                            生成外包维修链接
+                        </button>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+        this.resultBox.classList.remove('hidden');
+    }
+
+    hideResult() {
+        if (this.resultBox) this.resultBox.classList.add('hidden');
+    }
+
+    showError(message) {
+        if (!this.errorBox) return;
+        const errorMessage = document.getElementById('errorMessage');
+        if (errorMessage) errorMessage.textContent = message;
+        this.errorBox.classList.remove('hidden');
+    }
+
+    hideError() {
+        if (this.errorBox) this.errorBox.classList.add('hidden');
+    }
+}
+
 // ==================== 查询历史管理器 ====================
 class HistoryManager {
     constructor() {
-        this.storageKey = 'fa_query_history_v5'; // New storage key
+        this.storageKey = 'fa_query_history_v5';
         this.maxItems = 20;
         this.listEl = document.getElementById('historyList');
         this.emptyEl = document.getElementById('emptyHistory');
@@ -545,12 +1107,11 @@ class HistoryManager {
                 const ip = item.dataset.ip;
                 const facodeInput = document.getElementById('facodeInput');
                 const ipInput = document.getElementById('ipInput');
-                const form = document.getElementById('queryForm');
 
-                if (facodeInput && ipInput && form) {
+                if (facodeInput && ipInput) {
                     facodeInput.value = facode;
                     ipInput.value = ip;
-                    form.dispatchEvent(new Event('submit'));
+                    queryManager.performQuery();
                 }
             });
         }
@@ -630,156 +1191,8 @@ class HistoryManager {
     }
 }
 
-// ==================== 查询管理器 ====================
-class QueryManager {
-    constructor() {
-        this.form = document.getElementById('queryForm');
-        this.resultBox = document.getElementById('resultBox');
-        this.errorBox = document.getElementById('errorBox');
-        this.loadingEl = document.getElementById('loading');
-        this.curlCommand = document.getElementById('curlCommand');
-
-        this.init();
-    }
-
-    init() {
-        if (this.form) {
-            this.form.addEventListener('submit', (e) => {
-                e.preventDefault();
-                this.performQuery();
-            });
-
-            const facodeInput = document.getElementById('facodeInput');
-            const ipInput = document.getElementById('ipInput');
-            if (facodeInput) facodeInput.addEventListener('input', () => this.updateCurlCommand());
-            if (ipInput) ipInput.addEventListener('input', () => this.updateCurlCommand());
-        }
-        this.updateCurlCommand();
-    }
-
-    updateCurlCommand() {
-        const facode = document.getElementById('facodeInput')?.value || 'FA001';
-        const ip = document.getElementById('ipInput')?.value || 'localhost';
-        const headers = connectionManager.getHeaders();
-
-        let curlCmd = `curl "http://${ip}:8080/api/query.php?facode=${facode}"`;
-        Object.entries(headers).forEach(([key, value]) => {
-            if (value) curlCmd += ` \\\n  -H "${key}: ${value}"`;
-        });
-
-        if (this.curlCommand) this.curlCommand.textContent = curlCmd;
-    }
-
-    async performQuery() {
-        const facode = document.getElementById('facodeInput')?.value.trim();
-        const ip = document.getElementById('ipInput')?.value.trim() || 'localhost';
-
-        // 校验
-        if (!ip) {
-            uiManager.alert('请输入服务器 IP 地址或域名', '缺少参数');
-            return;
-        }
-
-        if (!facode) {
-            uiManager.alert('请输入固定资产编码', '参数错误');
-            return;
-        }
-
-        this.showLoading();
-        this.hideError();
-        this.hideResult();
-
-        try {
-            const headers = connectionManager.getHeaders();
-            const url = `http://${ip}:8080/api/query.php?facode=${encodeURIComponent(facode)}`;
-
-            const response = await fetch(url, { method: 'GET', headers: headers });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                const rawError = errorData.error || `HTTP 错误！状态码: ${response.status}`;
-                const translatedError = connectionManager.translateError ? connectionManager.translateError(rawError) : rawError;
-                throw new Error(translatedError);
-            }
-            const data = await response.json();
-
-            if (data.success && data.data) {
-                this.showResult(data.data);
-                historyManager.add({ facode, ip, sn: data.data.sn });
-            } else if (data.success && !data.data) {
-                this.showError('未找到该固定资产编码对应的序列号');
-                historyManager.add({ facode, ip, sn: null });
-            } else {
-                const rawError = data.error || '查询失败';
-                const translatedError = connectionManager.translateError ? connectionManager.translateError(rawError) : rawError;
-                throw new Error(translatedError);
-            }
-        } catch (error) {
-            let errorMsg = '查询出错：';
-            if (error.message.includes('Failed to fetch')) {
-                errorMsg += '无法连接到服务器，请检查 IP 和后端状态';
-            } else {
-                errorMsg += error.message;
-            }
-            this.showError(errorMsg);
-        } finally {
-            this.hideLoading();
-        }
-    }
-
-    showLoading() {
-        if (this.loadingEl) this.loadingEl.classList.remove('hidden');
-    }
-
-    hideLoading() {
-        if (this.loadingEl) this.loadingEl.classList.add('hidden');
-    }
-
-    showResult(data) {
-        if (!this.resultBox) return;
-
-        const resultContent = document.getElementById('resultContent');
-        if (resultContent) {
-            resultContent.innerHTML = `
-                <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6 border border-emerald-100 shadow-sm animate-fade-in">
-                    <div class="flex items-center justify-between mb-4">
-                        <span class="text-sm font-bold text-emerald-600 uppercase tracking-widest">查询结果</span>
-                        <span class="bg-emerald-200 text-emerald-800 text-xs px-2 py-1 rounded-full font-bold">成功</span>
-                    </div>
-                    <div class="space-y-4">
-                        <div>
-                            <div class="text-xs text-gray-500 uppercase font-semibold mb-1">固定资产编码</div>
-                            <div class="text-2xl font-bold text-gray-800 font-mono">${data.facode}</div>
-                        </div>
-                        <div class="h-px bg-emerald-200"></div>
-                        <div>
-                            <div class="text-xs text-gray-500 uppercase font-semibold mb-1">序列号 (SN)</div>
-                            <div class="text-3xl font-extrabold text-emerald-600 font-mono tracking-wide selection:bg-emerald-200">${data.sn}</div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        this.resultBox.classList.remove('hidden');
-    }
-
-    hideResult() {
-        if (this.resultBox) this.resultBox.classList.add('hidden');
-    }
-
-    showError(message) {
-        if (!this.errorBox) return;
-        const errorMessage = document.getElementById('errorMessage');
-        if (errorMessage) errorMessage.textContent = message;
-        this.errorBox.classList.remove('hidden');
-    }
-
-    hideError() {
-        if (this.errorBox) this.errorBox.classList.add('hidden');
-    }
-}
-
 // ==================== 初始化 ====================
+let authManager;
 let connectionManager;
 let historyManager;
 let queryManager;
@@ -787,11 +1200,12 @@ let uiManager;
 
 document.addEventListener('DOMContentLoaded', () => {
     uiManager = new UIManager();
+    authManager = new AuthManager();
     connectionManager = new ConnectionManager();
     historyManager = new HistoryManager();
     queryManager = new QueryManager();
 
-    // EXPOSE TO WINDOW for inline onclick handlers
+    window.authManager = authManager;
     window.connectionManager = connectionManager;
     window.uiManager = uiManager;
     window.queryManager = queryManager;
